@@ -230,7 +230,8 @@ func main() {
 	// MQTT Init
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(fmt.Sprintf("tcp://%s:%d", MQTT_HOST, MQTT_PORT))
-	opts.SetClientID(time.DateTime)
+	opts.SetClientID(time.Now().String())
+	fmt.Println(time.Now().String())
 	// opts.SetUsername("emqx")
 	// opts.SetPassword("public")
 	// opts.SetAutoReconnect(true)
