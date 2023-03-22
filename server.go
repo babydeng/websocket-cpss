@@ -42,7 +42,7 @@ func newHub() *Hub {
 	}
 }
 
-var data = new(Data)
+var data = Data{Num: 0, Time: time.Now().Unix(), Name: ""}
 var persons = make(map[string]bool)
 var hub = newHub()
 
@@ -101,6 +101,7 @@ var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Me
 }
 
 var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
+	sub(client)
 	fmt.Println("Connected")
 }
 
@@ -187,15 +188,25 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 	conn.ws = ws
 	hub.connections[conn] = true
 
+	// connect
+	message, err := json.Marshal(&data)
+	err = conn.ws.WriteMessage(1, message)
+	if err != nil {
+		log.Println("WriteMessage:", err)
+		conn.ws.Close()
+		log.Println("Disconnect")
+		return
+	}
+
 	for {
 		select {
 		case <-conn.send:
 			// fmt.Printf("%T", res)
 			message, err := json.Marshal(&data)
-			err = ws.WriteMessage(1, message)
+			err = conn.ws.WriteMessage(1, message)
 			if err != nil {
 				log.Println("WriteMessage:", err)
-				ws.Close()
+				conn.ws.Close()
 				log.Println("Disconnect")
 				return
 			}
@@ -219,9 +230,10 @@ func main() {
 	// MQTT Init
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(fmt.Sprintf("tcp://%s:%d", MQTT_HOST, MQTT_PORT))
-	opts.SetClientID("go_mqtt_client")
+	opts.SetClientID(time.DateTime)
 	// opts.SetUsername("emqx")
 	// opts.SetPassword("public")
+	// opts.SetAutoReconnect(true)
 
 	// WS handler
 	mux.Handle("/", http.HandlerFunc(rootHandler))
@@ -237,7 +249,6 @@ func main() {
 		panic(token.Error())
 	}
 	go Init()
-	sub(client)
 
 	err := s.ListenAndServe()
 	if err != nil {

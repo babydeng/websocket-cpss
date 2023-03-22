@@ -12,6 +12,7 @@ var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Me
 
 var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
 	fmt.Println("Connected")
+	sub(client)
 }
 
 var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err error) {
@@ -23,7 +24,7 @@ func main() {
 	var port = 1883
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(fmt.Sprintf("tcp://%s:%d", broker, port))
-	opts.SetClientID("go_mqtt_client")
+	opts.SetClientID("go_mqtt_client1")
 	opts.SetUsername("emqx")
 	opts.SetPassword("public")
 	opts.SetDefaultPublishHandler(messagePubHandler)
