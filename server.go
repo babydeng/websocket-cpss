@@ -64,13 +64,13 @@ var upgrader = websocket.Upgrader{
 */
 
 /*
-WS Params Begin
+MQTT Params Begin
 */
 var MQTT_HOST = "10.177.29.226"
 var MQTT_PORT = 1883
 
 /*
-	WS Params End
+	MQTT Params End
 */
 
 /*
@@ -107,6 +107,13 @@ var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
 
 var connectLostHandler mqtt.ConnectionLostHandler = func(client mqtt.Client, err error) {
 	fmt.Printf("Connect lost: %v", err)
+}
+
+func sub(client mqtt.Client) {
+	topic := "face-re"
+	token := client.Subscribe(topic, 1, nil)
+	token.Wait()
+	fmt.Printf("Subscribed to topic: %s\n", topic)
 }
 
 /*
@@ -159,17 +166,6 @@ func InSameDay(t1, t2 int64) bool {
 //		time.Sleep(time.Second)
 //	}
 //}
-
-func sub(client mqtt.Client) {
-	topic := "face-re"
-	token := client.Subscribe(topic, 1, nil)
-	token.Wait()
-	fmt.Printf("Subscribed to topic: %s\n", topic)
-}
-
-/*
-	MQTT Handler End
-*/
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Welcome!\n")
