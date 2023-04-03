@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	_ "github.com/lib/pq"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -34,6 +37,13 @@ var data = []byte(`{
     }
 }`)
 
+// 定义打卡数据结构体
+type Attendance struct {
+	ID   int64     `json:"id"`
+	Name string    `json:"name"`
+	Time time.Time `json:"time"`
+}
+
 // var data = Data{Num: 0, Time: time.Now().Unix(), Name: ""}
 var sentNames = make(map[string]string)
 
@@ -54,19 +64,22 @@ var MQTT_PORT = 1883
 /*
 MQTT Handler Begin
 */
-var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Message) {
-	fmt.Printf("Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
 
-	var obj map[string]interface{}
-	if err := json.Unmarshal(data, &obj); err != nil {
-		panic(err)
-	}
-	if msg.Topic() == "face-re" {
-		name := string(msg.Payload())
-		today := time.Now().Format("2006-01-02")
-		if sentDate, ok := sentNames[name]; ok {
-			if sentDate == today {
-				return
+func messagePubHandler(db *sql.DB) func(mqtt.Client, mqtt.Message) {
+	return func(client mqtt.Client, msg mqtt.Message) {
+		fmt.Printf("Received message: %s from topic: %s\n", msg.Payload(), msg.Topic())
+
+		var obj map[string]interface{}
+		if err := json.Unmarshal(data, &obj); err != nil {
+			panic(err)
+		}
+		if msg.Topic() == "face-re" {
+			name := string(msg.Payload())
+			today := time.Now().Format("2006-01-02")
+			if sentDate, ok := sentNames[name]; ok {
+				if sentDate == today {
+					return
+				}
 			} else {
 				sentNames[name] = today
 				obj["eventData"].(map[string]interface{})["objectId"] = name
@@ -77,21 +90,16 @@ var messagePubHandler mqtt.MessageHandler = func(client mqtt.Client, msg mqtt.Me
 					fmt.Println(err)
 					return
 				}
+				attendance := Attendance{Name: name, Time: time.Now()}
+				_, err = db.Exec("INSERT INTO attendance (name, time) VALUES ($1, $2)", attendance.Name, attendance.Time)
+				if err != nil {
+					log.Fatal(err)
+				}
+				fmt.Printf("插入打卡数据 ：%s，时间：%s\n", attendance.Name, attendance.Time.Format("2006-01-02 15:04:05"))
 			}
-		} else {
-			sentNames[name] = today
-			obj["eventData"].(map[string]interface{})["objectId"] = name
-			obj["eventData"].(map[string]interface{})["data"].(map[string]interface{})["signed_in_count"] = 1
-			obj["timestamp"] = time.Now().Unix()
-			err := sendEvent(obj)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
+
 		}
-
 	}
-
 }
 
 var connectHandler mqtt.OnConnectHandler = func(client mqtt.Client) {
@@ -141,6 +149,20 @@ func sendEvent(data map[string]interface{}) error {
 
 func main() {
 
+	// 数据库初始化
+	// 创建数据库连接
+	db, err := sql.Open("postgres", "postgres://pi:123456@10.177.21.124/restapi?sslmode=disable")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	// 创建打卡表
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS attendance (id SERIAL PRIMARY KEY, name VARCHAR(50), time TIMESTAMP)")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// 在每天的0点清空map变量
 	go func() {
 		for {
@@ -174,7 +196,7 @@ func main() {
 	opts.SetClientID(time.Now().String())
 
 	// MQTT handler
-	opts.SetDefaultPublishHandler(messagePubHandler)
+	opts.SetDefaultPublishHandler(messagePubHandler(db))
 	opts.OnConnect = connectHandler
 	opts.OnConnectionLost = connectLostHandler
 	mqttClient := mqtt.NewClient(opts)
