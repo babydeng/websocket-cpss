@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
 	"io"
 	"log"
@@ -46,6 +47,10 @@ type Attendance struct {
 
 // var data = Data{Num: 0, Time: time.Now().Unix(), Name: ""}
 var sentNames = make(map[string]string)
+
+// Create a new ServeMux using Gorilla
+var rMux = mux.NewRouter()
+var PORT = ":1234"
 
 /*
 Other Params End
@@ -203,5 +208,134 @@ func main() {
 	if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
 		panic(token.Error())
 	}
-	<-c
+
+	s := http.Server{
+		Addr:         PORT,
+		Handler:      rMux,
+		ErrorLog:     nil,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  10 * time.Second,
+	}
+
+	rMux.NotFoundHandler = http.HandlerFunc(DefaultHandler)
+	// 当使用不支持当HTTP方法访问端点
+	notAllowed := notAllowedHandler{}
+	rMux.MethodNotAllowedHandler = notAllowed
+
+	// 定义HTTP GET方法的子路由器
+	// Define Handler Functions
+	// Register GET
+	getMux := rMux.Methods(http.MethodGet).Subrouter()
+	getMux.HandleFunc("/attendance", handleAttendance(db))
+	// 格式 2019-01-01
+	getMux.HandleFunc("/attendance/{date}", handleAttendanceByDate(db))
+
+	go func() {
+		log.Println("Listening to", PORT)
+		err := s.ListenAndServe()
+		if err != nil {
+			log.Printf("Error starting server: %s\n", err)
+			return
+		}
+	}()
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt)
+	sig := <-sigs
+	log.Println("Quitting after signal:", sig)
+	time.Sleep(5 * time.Second)
+	s.Shutdown(nil)
+}
+
+// 处理查询打卡数据的请求
+func handleAttendance(db *sql.DB) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// 获取当前日期
+		date := time.Now().Format("2006-01-02")
+
+		// 查询打卡数据
+		rows, err := db.Query("SELECT id, name, time FROM attendance WHERE date(time) = $1", date)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		// 解析查询结果
+		var attendances []Attendance
+		for rows.Next() {
+			var attendance Attendance
+			err := rows.Scan(&attendance.ID, &attendance.Name, &attendance.Time)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			attendances = append(attendances, attendance)
+		}
+
+		// 返回查询结果
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(attendances); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// 处理根据日期查询打卡数据的请求
+func handleAttendanceByDate(db *sql.DB) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// 获取请求中的日期参数
+		vars := mux.Vars(r)
+		date := vars["date"]
+		fmt.Println(date)
+		// 查询打卡数据
+		rows, err := db.Query("SELECT id, name, time FROM attendance WHERE date(time) = $1", date)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		// 解析查询结果
+		var attendances []Attendance
+		for rows.Next() {
+			var attendance Attendance
+			err := rows.Scan(&attendance.ID, &attendance.Name, &attendance.Time)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			attendances = append(attendances, attendance)
+		}
+
+		// 返回查询结果
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(attendances); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+func DefaultHandler(rw http.ResponseWriter, r *http.Request) {
+	log.Println("DefaultHandler Serving:", r.URL.Path, "from", r.Host, "with method", r.Method)
+	rw.WriteHeader(http.StatusNotFound)
+	Body := r.URL.Path + " is not supported. Thanks for visiting!\n"
+	fmt.Fprintf(rw, "%s", Body)
+}
+
+type notAllowedHandler struct{}
+
+func (h notAllowedHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
+	MethodNotAllowedHandler(rw, r)
+}
+
+// MethodNotAllowedHandler is executed when the HTTP method is incorrect
+func MethodNotAllowedHandler(rw http.ResponseWriter, r *http.Request) {
+	log.Println("Serving:", r.URL.Path, "from", r.Host, "with method", r.Method)
+	rw.WriteHeader(http.StatusNotFound)
+	Body := "Method not allowed!\n"
+	fmt.Fprintf(rw, "%s", Body)
 }
